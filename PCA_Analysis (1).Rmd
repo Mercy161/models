@@ -1,0 +1,1112 @@
+---
+title: "Analysis"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+```{r}
+rm ( list = ls ()) 
+library (squash) 
+library (Hmisc) 
+library(pavo)
+par (mfrow= c (1,1))
+```
+
+#Create a plot function:
+```{r}
+mercy_plot<-function (mydata, wavelengths, xlim, ylim,main,ylab){ 
+#Create color map: 
+map <- makecmap( as.numeric (mydata $ label),n = 2, breaks = pretty ,
+symm = FALSE, base = NA,
+colFn = colorRampPalette( c("red","green","blue")), col.na = NA, 
+right = FALSE, include.lowest = FALSE) 
+mycol <- cmap(mydata $ label, map = map)
+par (font=2,las=1,mar = c (5,4,4,10) + 0.1)
+#Plot spectra: 
+matplot (wavelengths, t (mydata $ DRS),font.axis =2, col =mycol,lty=1, xlab="",ylab="",type="l",lwd=3, xlim=xlim, ylim=ylim,main=main)
+minor.tick(nx=2, ny=2,tick.ratio=0.75) 
+par (mar = c (5,4,4,6) + 0.1) 
+title (xlab="Wavelength ␣ (nm)",ylab=ylab,font.lab=2) 
+#Plot color map: 
+vkey(map, title = "Key",stretch=2.4, side=2, skip=2, x=1100,y= min (ylim)) 
+}
+```
+
+
+```{r}
+#Define plot limits: 
+xlim <-c (1000,2350)
+ylim <-c (0,100) 
+main <- "" 
+ylab <- ""
+```
+
+## Some EDA ON the RAW Spectra
+#setwd(" ˜/ data ") 
+## we need to normalise the data to get rid of the negative � → reflectance 
+#values before converting to apparent absorbance. #Flatten or squash a list of lists into a simpler vector 
+#dealing with negative values and normalizing absorbance spectra
+
+```{r}
+library (pavo) 
+set.seed(12345) 
+spec <- read.csv("Book20.csv")
+#spec <- t(spec) 
+#write.csv(spec,"spectra.csv")
+```
+
+### Now we interpolate the data in 1-nm bins and ### convert the data to an rspec object
+
+```{r}
+spec <- as.rspec(spec)
+```
+
+
+```{r}
+is.rspec(spec)
+
+# Plot raw spectra
+par(mfrow=c(1,1))
+plot(spec)
+```
+
+
+###### We need to get rid of the 
+###### low SNR areas of spectra
+
+```{r}
+#Plot spectra with low SNR areas removed
+#postscript("raw_specra.eps")
+plot(spec, select = c(1,12,23), ylim = c(0, 100))
+```
+
+```{r}
+#abline(h = 0, lty = 3)
+#dev.off()
+#Truncate data to desired range (1002 and 2350 nm)
+spec_truncated <- as.rspec(spec, lim = c(1005, 2350))
+```
+
+```{r}
+#Plot the data to see how it looks
+plot(spec_truncated, select = 20, ylim = c(0, 80))
+```
+
+```{r}
+# create a vector with samples identity names
+spp <- gsub('\\.[0-9].*$', '', names(spec_truncated))[-1]
+table(spp)
+```
+
+
+## we can now convert the data to absorbance
+
+```{r}
+# we are going to use the spp vector we created to tell the
+# aggspec() function how to average the spectra in mspecs :
+sppspec <- aggspec(spec_truncated, by = spp, FUN = mean)
+round(sppspec[1:5, ], 2)
+```
+
+```{r}
+#Normalizing and Smoothing Spectra
+plotsmooth(sppspec, minsmooth = 0.05,
+maxsmooth = 0.5, curves = 4, ask = FALSE)
+```
+
+```{r}
+spec.sm <- procspec(sppspec, opt = "smooth", span = 0.05)
+```
+
+
+
+```{r}
+## processing options applied:
+## smoothing spectra with a span of 0.2
+plot(sppspec[,2] ~ sppspec[, 1],
+type = "l", lwd = 10, col = "grey",
+xlab = "Wavelength (nm)", ylab = "Reflectance (%)"
+)
+lines(spec.sm[,2] ~ sppspec[, 1], col = "red", lwd = 2)
+```
+
+```{r}
+# Run some different normalisations
+specs.max <- procspec(sppspec, opt = "max")
+```
+
+```{r}
+## processing options applied:
+## Scaling spectra to a maximum value of 1
+specs.min <- procspec(sppspec, opt = "min")
+```
+
+```{r}
+ ## processing options applied:
+## Scaling spectra to a minimum value of zero
+specs.str <- procspec(sppspec, opt = c("min", "max")) # multiple options
+```
+
+```{r}
+## processing options applied:
+## Scaling spectra to a minimum value of zero
+## Scaling spectra to a maximum value of 1
+# Plot results
+par(mfrow = c(1, 3), mar = c(2, 2, 2, 2), oma = c(3, 3, 0, 0))
+plot(specs.min[,2] ~ c(1005:2350), xlab = "", ylab = "", type = "l")
+abline(h = 0, lty = 2)
+plot(specs.max[,2] ~ c(1005:2350), ylim = c(0, 1), xlab = "", ylab = "", type = "l")
+abline(h = c(0, 1), lty = 2)
+plot(specs.str[,2 ] ~ c(1005:2350), type = "l", xlab = "", ylab = "")
+abline(h = c(0, 1), lty = 2)
+mtext("Wavelength (nm)", side = 1, outer = TRUE, line = 1)
+mtext("Normalised reflectance (%)", side = 2, outer = TRUE, line = 1)
+```
+
+```{r}
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 2), oma = c(2, 0, 0, 0))
+# Plot using median and standard deviation, default colours
+aggplot(spec_truncated, spp,
+FUN.center = median,
+ylim = c(0, 100),
+alpha = 0.3,
+legend=F)
+# Plot using mean and standard error, in greyscale
+aggplot(spec_truncated, spp,
+ylim = c(0, 100),
+FUN.error = function(x) sd(x) / sqrt(length(x)),
+lcol = 1, shadecol = "grey", alpha = 0.7)
+```
+
+
+
+```{r}
+par(xpd = FALSE)
+#extract first component of filenames containing species names
+spp <- do.call(rbind, strsplit(names(spec_truncated), "\\."))[, 1]
+
+class(spec_truncated)
+```
+
+```{r}
+# Save the truncated data to a csv file
+# Define the file path where you want to save the CSV file
+#file_path <- "D:/Downloads/spec_truncated.csv"
+
+# Write the data to a CSV file
+#write.csv(spec_truncated, file = file_path, row.names = FALSE)
+
+# Transpose the data frame
+#spec_truncated_transposed <- t(spec_truncated)
+
+# Convert transposed data into a data frame
+#spec_truncated_transposed <- as.data.frame(spec_truncated_transposed, col.names = TRUE)
+
+# Save the transposed data to a CSV file
+#file_path <- "D:/Downloads/spec_truncated_transposed.csv"
+#write.csv(spec_truncated_transposed, file = file_path, row.names = FALSE)
+
+
+```
+
+```{r}
+# Load truncated data, Before loading the data, manually delete the first row which
+# cointains v1,v2,v3...e.t.c.. which is created when we convert a matrix to a dataframe
+spectra <- read.csv("spec_truncated_transposed.csv",
+sep = ",",
+dec = ".",
+header = TRUE)
+```
+
+```{r}
+#check the data
+spectra[1:10,1:5]
+```
+
+```{r}
+# Create a data frame called mydata with two columns:
+# - 'label' column containing wavelength values from spectra$wl
+# - 'DRS' column containing reflectance values from spectra[2:ncol(spectra)]
+mydata <- data.frame(label=I(spectra$wl),
+DRS = I(spectra[2:ncol(spectra)]))
+# Retrieve wavelength numbers from column names of DRS column in mydata
+wavelengths<-substring(colnames(mydata$DRS),2,6) # using substring() function to extract the 2nd to 4th characters from column names
+wavelengths<-as.numeric(wavelengths) # convert extracted characters into numeric values
+head(wavelengths) # display the wavelength numbers
+```
+
+
+```{r}
+#Define a custom function for ploting the data to save us the headache
+
+mercy_plot <- function(mydata, wavelengths, xlim, ylim, main, ylab, x, y) {
+# Find unique labels using gsub
+unique_labels <- unique(gsub("[^A-Za-z]+", "", mydata$label))
+num_labels <- length(unique_labels)
+# Create color palette
+color_palette <- rainbow(num_labels)
+names(color_palette) <- unique_labels
+# Initialize the plot
+plot(NULL, xlim = xlim, ylim = ylim, xlab = "Wavelength (nm)", ylab = ylab, main = main)
+# Plot spectra
+for (label in unique_labels) {
+subset_data <- mydata[gsub("[^A-Za-z]+", "", mydata$label) == label, ]
+subset_wavelengths <- wavelengths
+subset_drs <- subset_data$DRS
+subset_color <- color_palette[label]
+matlines(subset_wavelengths, t(subset_drs), col = subset_color, lty = 1, lwd = 3)
+}
+# Add minor tick marks
+minor.tick(nx = 2, ny = 2, tick.ratio = 0.75)
+# Create a legend for the groups
+legend_labels <- unique_labels
+legend_colors <- color_palette[unique_labels]
+legend(x, y, legend = legend_labels, fill = legend_colors, title = "Samples", bty = "n")
+}
+#Set some default parameters
+xlim<-c(1000,2350)
+ylim<-c(0,1)
+main<- ""
+ylab<- ""
+```
+
+
+
+```{r}
+#plot the raw data
+mercy_plot(mydata, wavelengths,xlim,ylim =c(0,100),x=2000,y=80,
+main = "Raw DRS spectra",ylab = "Reflectance (%)")
+```
+
+```{r}
+# Absorb is a function that takes in a matrix of spectra as input
+# and returns a matrix of absorbances calculated using the equation
+# log10(1/R), where R is the reflectance.
+Absorb <- function(spectra) {
+        # Convert spectra to a matrix
+        spectra <- as.matrix(spectra)
+        # Calculate absorbances using log10(1/R)
+        spect_Absorb <- log10(1/spectra)
+        # Return the matrix of absorbances
+        return(spect_Absorb)
+}
+# Perform conversion
+# Apply the Absorb function to the DRS column of the mydata data frame
+# and store the result in the newspectra variable.
+newspectra <- Absorb(mydata$DRS)
+# Check for NaN values in the newspectra matrix using the table function.
+# If there are any NaN values, they will be printed in the output.
+table(is.nan(newspectra))
+```
+
+```{r}
+# Creates a new data frame called mydataAbsorb, which includes the 'label' column from mydata
+# and a new column 'DRS' which contains the new spectra from newspectra.
+mydataAbsorb1 <- data.frame(label=I(mydata$label), DRS = I(newspectra))
+# Plot the new spectra using the function 'mercy_plot'
+# Add minor tick mar
+mercy_plot(mydataAbsorb1, wavelengths, xlim, ylim = c(-1.8,0.15),x=1002,y=-1.9,
+main = "Absorbance from Reflectance",ylab = "Absorbance (a.u)")
+# Save the data frame to a CSV file
+write.csv(mydataAbsorb1, "mydataAbsorb1.csv")
+```
+
+```{r}
+# Convert mydataAbsorb to a data frame with the rows and columns transposed.
+#mydataAbsorb <- as.data.frame(t(mydataAbsorb1))
+# Write the data in mydataAbsorb to a CSV file called "Absorb_trans_data.csv".
+#write.csv(mydataAbsorb,"Absorb_trans_data.csv")
+# AFTER SAVING THE DATASET, OPEN IT AND MODIFY IT MANUAL TO REMOVE ANY DISCREPANCES INTRODUCED eg the DRS.X in the wavelengths (first column)
+# Remove the object 'newspectra' from memory.
+rm(newspectra)
+```
+
+```{r}
+# Read the absorbance data from a csv file and convert it to an rspec object
+spec <- read.csv("Absorb_trans_data.csv")
+spec <- as.rspec(spec)
+```
+
+
+
+```{r}
+# Check if the object is of class 'rspec'
+is.rspec(spec)
+
+```
+```{r}
+# Set the plotting layout to a single row and column
+par(mfrow=c(1,1))
+# Plot the absorbance spectra
+plot(spec)
+```
+```{r}
+# Create a copy of the spectra for testing purposes
+testspecs <- spec
+# Reset the plotting layout to the default
+par(mfrow=c(1,1))
+```
+
+
+```{r}
+###################################################################
+# Now we can Apply two different processing options to the data
+testspecs.fix1 <- procspec(testspecs, fixneg = "addmin")
+```
+
+```{r}
+testspecs.fix2 <- procspec(testspecs, fixneg = "zero")
+```
+
+```{r}
+# Plot it
+par(mfrow=c(1,1))
+par(mar = c(2, 2, 2, 2), oma = c(3, 3, 0, 0))
+layout(cbind(c(1, 1), c(2, 3)), widths = c(2, 1, 1))
+plot(testspecs, select = 2, ylim = c(-1.9, -0.5))
+abline(h = 0, lty = 3)
+plot(testspecs.fix1, select = 2, ylim = c(0, 1))
+abline(h = 0, lty = 3)
+plot(testspecs.fix2, select = 2, ylim = c(0, 0.001))
+abline(h = 0, lty = 3)
+mtext("Wavelength (nm)", side = 1, outer = TRUE, line = 1)
+mtext("Log10(1/R)", side = 2, outer = TRUE, line = 1)
+```
+
+```{r}
+par(mfrow=c(1,1))
+```
+
+Normalizing and Smoothing Spectra
+
+```{r}
+# use the plotsmooth() function to determine a suitable smoothing parameter (span). This function
+# allows you to set a minimum and maximum smoothing parameter to try and plots the resulting curves against
+# the unsmoothed (raw) data in a convenient multipanel figure.-
+sppspec <- testspecs.fix1
+plotsmooth(sppspec, minsmooth = 0.01, maxsmooth = 0.07,
+curves = 5,specnum = "6",ask = FALSE)
+```
+
+```{r}
+##From the resulting plot, we can see that span = 0.07 is the minimum amount of smoothing to remove spectral noise
+# while preserving the original spectral shape. Based on this value, we will now use the opt argument in procspec()
+# to smooth data for further plotting and analysis.
+par(mfrow=c(1,1))
+spec.sm <- procspec(sppspec, opt = "smooth", span = 0.07)
+```
+
+```{r}
+plot(sppspec[, 2] ~ sppspec[, 1],
+type = "l",
+lwd = 10,
+col = "grey",xlab = "Wavelength (nm)",ylab = "Log10(1/R)",
+main="Smoothing with 0.07 pan")
+mtext("Wavelength (nm)", side = 1, outer = TRUE, line = 1)
+mtext("Log10(1/R)", side = 2, outer = TRUE, line = 1)
+par(mfrow=c(1,1))
+lines(spec.sm[, 2] ~ sppspec[, 1], col = "red",lwd = 2)
+```
+
+```{r}
+
+##We can also try different normalisations. Options include subtracting the minimum Log (1/R) of a spectrum at
+# all wavelengths (effectively making the minimum Log (1/R) equal to zero, opt = "min", left panel, below) and
+# making the Log (1/R) at all wavelength proportional to the maximum Log (1/R) (i.e. setting maximum Log (1/R)
+# to 1; opt = "max", centre panel, below). Note that the user can specify multiple processing options that will be
+# applied sequentially to the spectral data by procspec() (right panel, below).
+# Run normalization with maximum value of 1
+specs.max <- procspec(spec.sm, opt = "max")
+
+
+```
+```{r}
+specs.min <- procspec(spec.sm, opt = "min")
+```
+```{r}
+specs.str <- procspec(spec.sm, opt = c("min", "max")) # multiple options
+```
+
+```{r}
+# Plot results
+
+
+par(mfrow = c(1, 3), mar = c(2, 2, 2, 2), oma = c(3, 3, 0, 0))
+plot(specs.min[, 2] ~ c(1005:2350), xlab = "", ylab = "", type = "l")
+abline(h = 0, lty = 2)
+plot(specs.max[, 2] ~ c(1005:2350), ylim = c(0, 1),
+xlab = "", ylab = "", type = "l")
+abline(h = c(0, 1), lty = 2)
+plot(specs.str[, 2] ~ c(1005:2350), type = "l", xlab = "", ylab = "")
+abline(h = c(0, 1), lty = 2)
+mtext("Wavelength (nm)", side = 1, outer = TRUE, line = 1)
+mtext("Normalised Log (1/R)", side = 2, outer = TRUE, line = 1)
+```
+
+```{r}
+par(mfrow=c(1,1))
+
+
+ write.csv(specs.str,"cleaned_drs_absorbance_data.csv")
+ specs.str1<-t(specs.str)
+write.csv(specs.str1,"cleaned_trans_drs_absorbance_data.csv")
+```
+
+```{r}
+spectra<- read.csv("cleaned_trans_drs_absorbance_data.csv",
+sep=",",dec=".",header=TRUE)
+spectra[1:10,1:5]
+```
+
+```{r}
+mydata <- data.frame(label=I(spectra$wl),
+                     #samples=I(spectra$samples),
+                     DRS = I(spectra[2:ncol(spectra)]))
+
+
+#Retrieve wavelength numbers from colomn names: 
+wavelengths<-substring(colnames(mydata$DRS),2,7)
+wavelengths<-as.numeric(wavelengths)
+
+#Sort the data by decreasing SN values: 
+mydata<-mydata[order(mydata$label, decreasing = T),]
+
+#plot the raw data 
+#mercy_plot(mydata, wavelengths, xlim=c(1000,2700), ylim =c(0,1),x=2300,y=1,
+            #main = "DRS Absorbance Spectra",ylab = "Log (1/R)  a.u.") 
+```
+Create smoothing function:
+
+```{r}
+SmoothFast<-function(Spectra,windowsize){                         
+     
+     #Create smoothing matrix: 
+     Mat<-matrix(0,length((windowsize+1):(ncol(Spectra)-windowsize)),2*windowsize+1)
+     for(j in 1:nrow(Mat)){Mat[j,]<-seq(j,j+2*windowsize,1)}
+     
+     #Smoothing spectra using matrix operations:
+     newspectra<-matrix(0,nrow(Spectra),
+                        length((windowsize+1):(ncol(Spectra)-windowsize)))
+     for(i in 1:nrow(Mat)){newspectra[,i]<-apply(Spectra[,Mat[i,]],1,mean)}
+     
+     #Add front and end tails (not smoothed):
+     fronttail<-newspectra[,1]
+     endtail<-newspectra[,ncol(newspectra)]
+     for(k in 1:(windowsize-1)){fronttail<-data.frame(fronttail,newspectra[,1])
+     endtail<-data.frame(endtail,newspectra[,ncol(newspectra)])}
+     newspectra<-data.frame(fronttail,newspectra,endtail)
+     
+     return(newspectra)}
+
+#Apply smoothing function:
+newspectra<-SmoothFast(mydata$DRS,windowsize=3)
+
+mydataSmooth <- data.frame(label=I(mydata$label),
+                           DRS = I(newspectra))
+rm(newspectra)
+
+#Plot smoothed spectra:
+mercy_plot(mydataSmooth, wavelengths,xlim=c(1000,2700), ylim =c(0,1),x=2300,y=1,
+            main = "Moving Average",ylab = "Log (1/R)  a.u")
+```
+
+
+
+
+```{r}
+library (signal) 
+#Apply Savitzky-Golay smoothing to all spectra:
+mydataSmooth <-apply (mydata $ DRS,1, FUN=sgolayfilt, p = 2, n = 3, m = 1, ts = 1) 
+#Create new data frame: 
+mydataSmoothSG <-data.frame (label= I (mydata $ label), 
+DRS = I ( t (mydataSmooth))) 
+rm (newspectra)
+#Plot spectra:
+mercy_plot(mydataSmoothSG, wavelengths, xlim = c(1000, 2700), ylim = c(-.005,.01 ), x = 2300, y = 1,
+            main = "Savitzky-Golay", ylab = "Log (1/R) a.u.")
+```
+
+# Perform MSC correction:
+
+```{r}
+# Load the necessary library
+library(pls)
+
+# Assuming mydataSmoothSG and wavelengths are already defined in your workspace
+# Ensure 'mydataSmoothSG$DRS' is a numeric matrix
+mydataSmoothSG_matrix <- as.matrix(mydataSmoothSG$DRS)
+
+# Apply MSC to the smoothed spectra
+msc_spectra <- msc(mydataSmoothSG_matrix)
+
+# Create a new data frame with MSC-corrected spectra
+mydataMSC <- data.frame(label = I(mydataSmoothSG$label),
+                        DRS = I(msc_spectra))
+rm(msc_spectra)
+#Plot new spectra:
+mercy_plot(mydataMSC, wavelengths, xlim=c(1000,2700), ylim =c(-.005,0.01),x=2300,y=2,
+            main = "MSC",ylab = "Log (1/R)  a.u")
+```
+
+```{r}
+# Function to normalize spectra
+normalize_spectra <- function(spectra) {
+  spectra <- as.matrix(spectra)
+  min_val <- apply(spectra, 1, min)
+  max_val <- apply(spectra, 1, max)
+  normalized_spectra <- (spectra - min_val) / (max_val - min_val)
+  return(normalized_spectra)
+}
+
+# Apply normalization to the MSC-corrected spectra
+normalized_spectra <- normalize_spectra(mydataMSC$DRS)
+
+# Create a new data frame with normalized MSC-corrected spectra
+mydataMSC_normalized <- data.frame(label = I(mydataMSC$label),
+                                   DRS = I(normalized_spectra))
+
+# Plot the normalized MSC-corrected spectra
+mercy_plot(mydataMSC_normalized, wavelengths, xlim = c(1000, 2700), ylim = c(0, 1), x = 2300, y = 1,
+            main = "Normalized MSC", ylab = "Normalized Log (1/R) a.u")
+
+```
+```{r}
+# Define the directory and file name
+output_directory <- "D:/Downloads"
+output_file <- "normalized_MSC_spectra.csv"
+
+# Combine the directory and file name
+output_path <- file.path(output_directory, output_file)
+
+# Save the mydataMSC_normalized data frame as a CSV file
+write.csv(mydataMSC_normalized, output_path, row.names = FALSE)
+
+# Plot the normalized MSC-corrected spectra
+mercy_plot(mydataMSC_normalized, wavelengths, xlim = c(1000, 2700), ylim = c(0, 1), x = 2300, y = 1,
+           main = "Normalized MSC", ylab = "Normalized Log (1/R) a.u")
+
+# Print message to confirm the file has been saved
+cat("The file has been saved to", output_path, "\n")
+
+```
+
+
+```{r}
+### pca using chemospec 
+#rm ( list = ls ()) 
+```
+
+```{r}
+#MSCdata <- as.data.frame(t(t(mydataMSC_normalized)))
+#MSCdata <- t(mydataMSC) 
+#str(MSCdata) 
+#write.csv(MSCdata,"msc_data7.csv")
+```
+
+
+<!-- ## Loading the packages we will use -->
+
+```{r packages, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(ChemoSpecUtils)
+library(ChemoSpec)
+library(chemometrics)
+library(knitr)
+library(R.utils)
+library(utils)
+library(kableExtra) 
+library(tinytex)
+```
+
+
+
+```{r}
+#setwd ("pca ␣ 2021")
+```
+
+<!-- ## Reading a matrix data file stored in the working directory -->
+
+<!-- Ensure first that you have set the working directory where your data is located, idealy on your desktop in a folder for easier access. -->
+
+
+```{r}
+spec <- matrix2SpectraObject(
+  gr.crit = c("AO", "AC"),
+  gr.cols = c("green", "blue"),
+  freq.unit = "Wavelength (nm)",
+  int.unit = "Absorbance (%)",
+  descrip = "ACR Study",
+  in.file = "normalized_MSC_spectra109.csv",
+  out.file = "n0_day1_ACR_data",
+  chk = TRUE,
+  sep = ",",
+  dec = "."
+)
+
+```
+
+
+
+<!-- As it can be seen clearly, the data has 567 spectra and 3 groups from the group criteria, "CS","BF" and "M72" -->
+
+## Summary of the data
+<!-- We can look at our data summary using the "sumSpectra" function available in chemospec -->
+```{r echo=FALSE}
+sumSpectra(spec)
+```
+
+##  Plotting all the spectra
+
+<!-- we can visualize the spectra using the "plotSpectra" function and colour them according to the colour criteria that we  had specified. -->
+```{r echo=FALSE}
+plotSpectra(spec,
+            main = "MSC Spectra",
+            which = c(1:22),
+            yrange = c(0,1.),
+            xlim =c(1000,2350),
+            offset = 0.0001,
+            showGrid = FALSE,
+            lab.pos = 9000,
+            leg.loc = "topright")
+```
+
+```{r}
+# Feature selections
+# VIS spectra# 
+VISspec <- spec
+```
+
+```{r}
+# Plotting the spectra 
+plotSpectra(VISspec, 
+main = "VIS ␣ MSC ␣ Spectra",
+which = c (1:22),
+yrange = c (0,1.2), 
+offset = 0, 
+lab.pos = 2350, 
+showGrid = F, 
+leg.loc = "topright")
+```
+
+```{r}
+# NIR spectra #
+NIRspec <- removeFreq(spec, rem.freq = spec$freq > 2350| spec$freq < 2200)
+# Plotting the spectra 
+plotSpectra(NIRspec, 
+main = "NIR ␣ MSC ␣ Spectra",
+which = c (1:22),
+yrange = c (0,1), 
+offset = 0,
+lab.pos = 10,
+showGrid = F, 
+leg.loc = "topleft")
+```
+
+```{r}
+# NORMALIZING THE SPECTRA # 
+#VISspec <- normSpectra(VISspec) 
+#NIRspec <- normSpectra(NIRspec)
+```
+
+```{r}
+# PCA analysis of the VIS spectras #
+VISpca <-c_pcaSpectra(VISspec, 
+choice = "autoscale", 
+cent = T)
+```
+
+```{r}
+plotScores(VISspec, VISpca,
+main ="VIS ␣ Spectra",
+pcs = c (1,2), 
+ellipse = "none", 
+tol = "none", 
+leg.loc ="right") 
+ #tol = 0.05) 
+#abline (v=0,h=0) 
+cv_pcaSpectra(VISspec, 
+pcs =5)
+```
+
+```{r}
+plotLoadings(VISspec, 
+VISpca, 
+main = "VIS ␣ Spectra",
+loads = c (1, 2), 
+ref = 91,
+tol = "none")
+```
+
+```{r}
+plot2Loadings(VISspec, 
+VISpca, 
+main = "VIS ␣ Spectra",
+loads = c (1, 2), 
+ref = 91, 
+tol = "none")
+```
+
+```{r}
+sPlotSpectra( VISspec,
+VISpca,
+pc = 1, 
+tol = 0.001, 
+main = "VIS ␣ Spectra")
+```
+
+```{r}
+# To check pca outliers 
+diagnostics <- pcaDiag(VISspec,
+VISpca, 
+pcs = 3, 
+quantile = 0.916, 
+plot = "SD")
+```
+
+```{r}
+# Scree plot 
+plot (VISpca, type = "l") 
+plotScree(VISpca, style = "alt", 
+main = "VIS ␣ Spectra")
+```
+
+```{r}
+# PCA analysis of the NIR spectras ## 
+NIRpca <-c_pcaSpectra(NIRspec, 
+choice = "autoscale") 
+#cent = T)
+```
+
+```{r}
+plotScores(NIRspec, 
+NIRpca,
+main ="NIR ␣ Spectra",
+pcs = c (1,2),
+ellipse = "none", 
+tol = "none", 
+leg.loc ="topright") 
+# tol = 0.05) 
+#abline (v=0,h=0)
+```
+
+```{r}
+cv_pcaSpectra(NIRspec, 
+pcs = 5)
+```
+
+```{r}
+plotLoadings(NIRspec, 
+NIRpca, main = "NIR ␣ Spectra", 
+loads = c (1, 2), 
+ref = 91, 
+tol = "none")
+```
+
+```{r}
+plot2Loadings(NIRspec, 
+NIRpca, 
+main = "NIR ␣ Spectra",
+loads = c (1, 2), 
+ref = 91,
+tol = "none")
+```
+
+```{r}
+sPlotSpectra( NIRspec,
+NIRpca,
+pc = 1,
+tol = 0.001,
+main = "NIR ␣ Spectra")
+```
+
+```{r}
+# To check pca outliers 
+diagnostics <- pcaDiag(NIRspec,
+NIRpca, 
+pcs = 1, 
+quantile = 0.999, 
+plot = "SD", 
+use.sym = F)
+```
+
+
+```{r}
+diagnostics <- pcaDiag(NIRspec, 
+NIRpca, 
+pcs = 1, 
+quantile = 0.999, 
+plot = "OD", 
+use.sym = F)
+```
+
+find outliers 
+
+```{r}
+x <- as.data.frame (diagnostics[["SDist"]]) 
+y <-as.data.frame ( as.factor (spec[["names"]]))
+```
+
+```{r}
+# Inspect diagnostics and spec
+#str(diagnostics)
+#str(spec)
+
+# Check if the specific elements exist and have the expected length
+print(length(diagnostics[["SDist"]]))
+print(length(spec[["names"]]))
+
+```
+
+
+
+```{r}
+#library (dplyr) 
+#s <- bind_cols(x,y)
+```
+
+#write.csv(s," / home / mercy / Desktop / pca journal data analysis / s.→ csv")
+
+```{r}
+# Scree plot 
+plot (NIRpca, type = "l")
+```
+
+```{r}
+plotScree(NIRpca, style = "alt",
+main = "VIS ␣ Spectra")
+```
+
+```{r}
+#### Extract the first 10 PC scores for modeling
+PCA_scores1 <- as.data.frame(NIRpca[["x"]]) 
+PCA_scores <- as.data.frame(PCA_scores1[,1:7]) 
+data_labels <- as.data.frame(spec[["groups"]]) 
+
+```
+
+```{r}
+ library(dplyr)
+PCA_data <- bind_cols(groups=data_labels,PCA_scores)
+write.csv(PCA_data,"pcadata305.csv")
+```
+```{r}
+# Load libraries
+library(neuralnet)
+library(caret)
+
+# Read data
+mydata <- read.csv('pcadata80.csv', sep = ",", header = TRUE)
+## normalisaion of data
+normalize <- function(x) {
+  x <- as.numeric(x)
+  return((x - min(x)) / (max(x) - min(x)))
+}
+Data <- as.data.frame(apply(mydata, 2, normalize))
+
+
+ #Data partitioning
+indexs <- sample(1:nrow(mydata), round(0.50 * nrow(mydata)))
+train_data <- mydata[indexs, ]
+test_data <- mydata[-indexs, ]
+
+# Neural network model
+model <- neuralnet(groups ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10, 
+                   data = train_data, 
+                   hidden = 20, 
+                   act.fct = "logistic", 
+                   threshold = 0.01, 
+                   algorithm = "rprop+", 
+                   err.fct = "sse", 
+                   linear.output = TRUE,
+                   stepmax = 1e6)  # Increasing stepmax to a very large number
+
+# Plot model
+plot(model)
+
+# Predictions on training data
+predcal_data <- compute(model, train_data[, c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10")])
+pred_trainNN <- predcal_data$net.result
+actual_train <- data.frame(pred = predcal_data$net.result, actual = train_data$groups)
+
+# Write predictions to CSV
+write.csv(actual_train, "DM train33.csv")
+
+# Error metrics on training data
+RMSEcal_model <- sqrt(sum((train_data$groups - pred_trainNN)^2) / nrow(train_data))
+Rsquaredcal_model <- 1 - sum((train_data$groups - pred_trainNN)^2) / sum((train_data$groups - mean(train_data$groups))^2)
+MAEcal_model <- sqrt(sum((train_data$groups - pred_trainNN)^2) / nrow(train_data))
+
+# Predictions on test data
+pred_data <- compute(model, test_data[, c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10")])
+pred_testNN <- pred_data$net.result
+actual_pred <- data.frame(pre = pred_data$net.result, actual = test_data$groups)
+
+# Write predictions to CSV
+write.csv(actual_pred, "DM test33.csv")
+
+# Plot actual vs predicted
+plot(actual_pred, main = "Predicted dry matter percentage  vs Actual dry matter percentage", col = 'blue', xlab = "Actual concentration", ylab = "Predicted dry matter percentage", pch = 16, type = "p")
+#abline(0, 1, col = "black")
+
+# Error metrics on test data
+RMSEpred_model <- sqrt(sum((test_data$groups - pred_testNN)^2) / nrow(test_data))
+Rsquaredpred_model <- 1 - sum((test_data$groups - pred_testNN)^2) / sum((test_data$groups - mean(test_data$groups))^2)
+MAEpred_model <- sqrt(sum((test_data$groups - pred_testNN)^2) / nrow(test_data))
+# Save model
+save(model, file = "model")
+
+# Load model
+load(file = "model")
+
+# Read input data for prediction
+inputdata <- read.csv("pcadata81.CSV", sep = ',', header = TRUE)
+
+# Normalize input_data based on the same normalization used during training if necessary
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+normalisedinData <- as.data.frame(lapply(inputdata, normalize))
+
+# Ensure predictor_data has the same columns used during model training
+predictor_data <- normalisedinData[, c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10")]
+
+# Predict using the model
+val_data_model_group2_est <- compute(model, predictor_data)
+
+# Extract predicted values
+predicted_values <- val_data_model_group2_est$net.result
+
+# Denormalize the predicted values based on the groups column of inputdata
+denormalizedval_model_data_group2_est <- predicted_values * (max(inputdata$groups) - min(inputdata$groups)) + min(inputdata$groups)
+
+# Combine the denormalized predicted values with actual groups from inputdata
+result <- data.frame(actual = inputdata$groups, predicted = denormalizedval_model_data_group2_est)
+
+# Write the result to a CSV file
+write.csv(result, "Group2_est_predconc1.csv", row.names = FALSE)
+# Calculate RMSE and R-squared on validation set
+RMSE_val <- sqrt(mean((inputdata$groups - denormalizedval_model_data_group2_est)^2))
+Rsquared_val <- 1 - sum((inputdata$groups - denormalizedval_model_data_group2_est)^2) / sum((inputdata$groups - mean(inputdata$groups))^2)
+
+# Print validation metrics
+print(paste("RMSE on validation set:", RMSE_val))
+print(paste("R-squared on validation set:", Rsquared_val))
+```
+
+#####Plotiing linear regression line###
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Read the data
+mydata <- read.csv('DM train32.csv', sep = ",", header = TRUE)
+
+# Fit a linear model
+model <- lm(pred ~ actual, data = mydata)
+
+# Print the model summary
+summary(model)
+
+# Extract R-squared value and coefficients
+r_squared <- summary(model)$r.squared
+intercept <- coef(model)[1]
+slope <- coef(model)[2]
+
+# Plot actual vs. predicted values with a regression line and conf
+ggplot(mydata, aes(x = actual, y = pred)) +
+  geom_point(color = "darkblue", alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black", fill = "lightblue", size = 1) +
+  labs(x = "Actual percentage", y = "Predicted percentage", 
+     title = "Actual vs. Predicted dry matter") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.background = element_rect(color = "black", fill = NA, size = 1)) +
+  annotate("text", x = min(mydata$actual), y = max(mydata$pre), 
+        label = paste("R^2 =", round(r_squared, 3)), 
+          hjust = 0, vjust = 1, size = 5, color = "black") +
+  annotate("text", x = min(mydata$actual), y = max(mydata$pred) - (max(mydata$pred) - min(mydata$pred)) * 0.1, 
+           label = paste("Intercept =", round(intercept, 3)), 
+           hjust = 0, vjust = 1, size = 5, color = "black") +
+  annotate("text", x = min(mydata$actual), y = max(mydata$pred) - (max(mydata$pred) - min(mydata$pred)) * 0.2, 
+           label = paste("Slope =", round(slope, 3)), 
+           hjust = 0, vjust = 1, size = 5, color = "black")
+```
+###SVM MODEL###
+
+```{r}
+#library(caret)
+df <- read.csv("pcadata84.csv", header = TRUE)
+
+str(df)
+head(df)
+intrain <- createDataPartition(y = df$Level, p = 0.50, list = FALSE)
+training <- df[intrain,]
+testing <- df[-intrain,]
+dim(training)
+dim(testing)
+anyNA(df)
+summary(df)
+
+training[["Level"]] = factor(training[["Level"]])
+trctrl <- trainControl(method = "repeatedcv", number = 30, repeats =10)
+svm_Linear <- train(Level ~., data = training, method = "svmRadial",
+                    trControl=trctrl,
+                    preProcess = c("center", "scale"),
+                   tunelength = 25)
+                    
+ # Print model details
+svm_Linear
+
+# Predict on the test set
+test_pred <- predict(svm_Linear, newdata = testing)
+
+# Fit a linear regression model on the test set predictions
+model <- lm(test_pred ~ testing$Level)
+
+# Extract R-squared value
+r_squared <- summary(model)$r.squared
+intercept <- coef(model)[1]
+slope <- coef(model)[2]                   
+# Print model details
+svm_Linear
+
+# Predict on the test set
+test_pred <- predict(svm_Linear, newdata = testing)
+
+# Fit a linear regression model on the test set predictions
+model <- lm(testing$Level ~ test_pred)
+
+# Extract R-squared value
+r_squared <- summary(model)$r.squared
+intercept <- coef(model)[1]
+slope <- coef(model)[2]
+
+# Plot actual vs. predicted values with a regression line
+ggplot(data = testing, aes(x = Level, y = test_pred)) +
+  geom_point(color = "darkblue", alpha = 0.6) +
+  geom_abline(intercept = intercept, slope = slope, color = "blue", size = 1) +
+  labs(x = "Actual concentration", y = "Predicted conentration", 
+       title = "Actual concentration vs. Predicted concentration") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.border = element_rect(color = "black", fill = NA, size = 1),
+        plot.background = element_rect(color = "black", fill = NA, size = 1)) +
+  annotate("text", x = min(testing$Level), y = max(test_pred), 
+           label = paste("R^2 =", round(r_squared, 3)), 
+           hjust = 0, vjust = 1, size = 5, color = "red") +
+  annotate("text", x = min(testing$Level), y = max(test_pred) - (max(test_pred) - min(test_pred)) * 0.1, 
+           label = paste("Intercept =", round(intercept, 3)), 
+           hjust = 0, vjust = 1, size = 5, color = "red") +
+  annotate("text", x = min(testing$Level), y = max(test_pred) - (max(test_pred) - min(test_pred)) * 0.2, 
+           label = paste("Slope =", round(slope, 3)), 
+           hjust = 0, vjust = 1, size = 5, color = "red")    
+```
+
