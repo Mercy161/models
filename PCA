@@ -1,0 +1,349 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
+from scipy.spatial.distance import mahalanobis
+from scipy.stats import chi2
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from matplotlib.patches import Ellipse
+
+# ============================================
+# 1. LOAD DATA
+# ============================================
+FILE_PATH = "/content/Copy of Diphenhydaramine PCA data.xlsx"
+
+df = pd.read_excel(FILE_PATH, sheet_name="Sheet1")
+
+# First column = wavelength
+wn = df.iloc[:, 0].values
+
+# Spectral data
+spectra = df.iloc[:, 1:].values
+
+# Sample names
+sample_names = df.columns[1:]
+
+print("Sample Names:")
+for s in sample_names:
+    print(s)
+
+# ============================================
+# 2. ASSIGN GROUPS
+# ============================================
+groups = []
+
+for name in sample_names:
+
+    name_l = str(name).strip().lower()
+
+    # STANDARD
+    if (
+        "standard" in name_l
+        or "std" in name_l
+        or "control" in name_l
+        or "reference" in name_l
+    ):
+        groups.append("Standard")
+
+    # WITHIN EXPIRY
+    elif (
+        "within-expiry" in name_l
+        or "within expiry" in name_l
+        or "within" in name_l
+        or "fresh" in name_l
+        or "valid" in name_l
+    ):
+        groups.append("Within-expiry")
+
+    # POST EXPIRY
+    elif (
+        "post-expiry" in name_l
+        or "post expiry" in name_l
+        or "expired" in name_l
+        or "post" in name_l
+    ):
+        groups.append("Post-expiry")
+
+    # UNKNOWN
+    else:
+        groups.append("Unknown")
+
+groups = np.array(groups)
+
+print("\nDetected Groups:")
+print(pd.Series(groups).value_counts())
+
+# ============================================
+# 3. ALS BASELINE CORRECTION
+# ============================================
+def als_baseline(y, lam=1e5, p=0.01, niter=10):
+
+    L = len(y)
+
+    D = sparse.diags(
+        [1, -2, 1],
+        [0, -1, -2],
+        shape=(L, L - 2)
+    )
+
+    w = np.ones(L)
+
+    for _ in range(niter):
+
+        W = sparse.spdiags(w, 0, L, L)
+
+        Z = W + lam * (D @ D.T)
+
+        z = spsolve(Z, w * y)
+
+        w = p * (y > z) + (1 - p) * (y < z)
+
+    return z
+
+# ============================================
+# 4. DESPIKING
+# ============================================
+def despike(y, z_thresh=5):
+
+    y_med = np.median(y)
+
+    y_std = np.std(y)
+
+    spikes = np.abs(y - y_med) > z_thresh * y_std
+
+    y2 = y.copy()
+
+    y2[spikes] = y_med
+
+    return y2
+
+# ============================================
+# 5. NORMALIZATION
+# ============================================
+def normalize_vector(y):
+
+    norm = np.linalg.norm(y)
+
+    if norm == 0:
+        norm = 1e-9
+
+    return y / norm
+
+# ============================================
+# 6. PREPROCESS FUNCTION
+# ============================================
+def preprocess(y):
+
+    # Despike
+    y1 = despike(y)
+
+    # Baseline correction
+    baseline = als_baseline(y1)
+
+    y2 = y1 - baseline
+
+    # Savitzky-Golay smoothing
+    y3 = savgol_filter(y2, 11, 3)
+
+    # Normalize
+    y4 = normalize_vector(y3)
+
+    return y4
+
+# ============================================
+# 7. PREPROCESS ALL SPECTRA (entire range)
+# ============================================
+processed_spectra = []
+
+for i in range(spectra.shape[1]):
+
+    y = spectra[:, i]
+
+    y_p = preprocess(y)
+
+    processed_spectra.append(y_p)
+
+processed_spectra = np.array(processed_spectra)   # shape (n_samples, n_wavelengths)
+
+print("\nProcessed Spectra Shape:")
+print(processed_spectra.shape)
+
+# ============================================
+# 8. DEFINE FUNCTION FOR PCA + OUTLIER REMOVAL + PLOTTING + METRICS
+# ============================================
+def pca_analysis(spectra_matrix, groups, sample_names, wavelength_range_name,
+                 wavelength_axis=None, ax=None):
+    """
+    Perform PCA on given spectra_matrix (samples x wavelengths) after standardization.
+    Remove outliers using Mahalanobis distance (95% chi2 threshold).
+    Plot score plot on provided axis (or create new one) and return metrics.
+    """
+    # Standardize variables (wavelengths)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(spectra_matrix)
+
+    # PCA with 2 components
+    pca = PCA(n_components=2)
+    scores = pca.fit_transform(X_scaled)
+    expl_var = pca.explained_variance_ratio_ * 100
+
+    print(f"\n--- {wavelength_range_name} ---")
+    print(f"PC1 variance: {expl_var[0]:.2f}%")
+    print(f"PC2 variance: {expl_var[1]:.2f}%")
+
+    # Outlier removal based on Mahalanobis distance in PCA space
+    threshold = np.sqrt(chi2.ppf(0.95, df=2))
+    outliers = []
+
+    for g in np.unique(groups):
+        idxs = np.where(groups == g)[0]
+        if len(idxs) < 3:
+            continue
+        group_scores = scores[idxs]
+        mean = np.mean(group_scores, axis=0)
+        cov = np.cov(group_scores, rowvar=False)
+        # Regularize covariance if singular
+        if np.linalg.matrix_rank(cov) < 2:
+            cov += np.eye(2) * 1e-6
+        inv_cov = np.linalg.inv(cov)
+        for idx_sample, point in zip(idxs, group_scores):
+            d = mahalanobis(point, mean, inv_cov)
+            if d > threshold:
+                outliers.append(idx_sample)
+
+    print(f"Outliers removed: {len(outliers)}")
+    if len(outliers) > 0:
+        print("Removed samples:")
+        for i in outliers:
+            print(f"  {sample_names[i]}")
+
+    # Clean data
+    scores_clean = np.delete(scores, outliers, axis=0)
+    groups_clean = np.delete(groups, outliers)
+    sample_names_clean = np.delete(sample_names, outliers)
+
+    # Compute separation metrics
+    unique_groups = np.unique(groups_clean)
+    centroids = {}
+    within_distances = []
+
+    for g in unique_groups:
+        idx = np.where(groups_clean == g)[0]
+        cent = np.mean(scores_clean[idx], axis=0)
+        centroids[g] = cent
+        # Average Euclidean distance of points to centroid
+        dists = np.linalg.norm(scores_clean[idx] - cent, axis=1)
+        within_distances.append(np.mean(dists))
+
+    # Between-group distances (Euclidean between centroids)
+    between_distances = {}
+    for i, g1 in enumerate(unique_groups):
+        for g2 in unique_groups[i+1:]:
+            d = np.linalg.norm(centroids[g1] - centroids[g2])
+            between_distances[f"{g1}–{g2}"] = d
+
+    # Separation index: average between-group distance / average within-group distance
+    avg_between = np.mean(list(between_distances.values()))
+    avg_within = np.mean(within_distances)
+    separation_index = avg_between / avg_within if avg_within > 0 else np.inf
+
+    # Plotting
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6,5))
+
+    colors = {"Standard": "#1f77b4", "Within-expiry": "#ff7f0e",
+              "Post-expiry": "#2ca02c", "Unknown": "#d62728"}
+
+    for g in unique_groups:
+        idx = np.where(groups_clean == g)[0]
+        ax.scatter(scores_clean[idx, 0], scores_clean[idx, 1],
+                   s=80, alpha=0.9, color=colors.get(g, "gray"), label=g)
+
+        # Confidence ellipse (95%)
+        if len(idx) >= 3:
+            x = scores_clean[idx, 0]
+            y = scores_clean[idx, 1]
+            cov_xy = np.cov(x, y)
+            mean_xy = [np.mean(x), np.mean(y)]
+            eigvals, eigvecs = np.linalg.eigh(cov_xy)
+            order = eigvals.argsort()[::-1]
+            eigvals = eigvals[order]
+            eigvecs = eigvecs[:, order]
+            angle = np.degrees(np.arctan2(*eigvecs[:, 0][::-1]))
+            ell = Ellipse(xy=mean_xy,
+                          width=2 * np.sqrt(eigvals[0] * 5.991),
+                          height=2 * np.sqrt(eigvals[1] * 5.991),
+                          angle=angle, edgecolor=colors.get(g, "gray"),
+                          fc='None', lw=2, ls='--')
+            ax.add_patch(ell)
+
+    ax.set_xlabel(f"PC1 ({expl_var[0]:.2f}%)", fontsize=12)
+    ax.set_ylabel(f"PC2 ({expl_var[1]:.2f}%)", fontsize=12)
+    ax.set_title(wavelength_range_name, fontsize=14)
+    ax.grid(True, linestyle="--", alpha=0.4)
+    ax.legend()
+
+    return {
+        "scores_clean": scores_clean,
+        "groups_clean": groups_clean,
+        "expl_var": expl_var,
+        "separation_index": separation_index,
+        "avg_between": avg_between,
+        "avg_within": avg_within,
+        "between_distances": between_distances
+    }
+
+# ============================================
+# 9. DEFINE WAVELENGTH REGIONS
+# ============================================
+# Full range: all wavelengths
+full_idx = np.arange(processed_spectra.shape[1])
+
+# Truncated range: 400–500 nm
+trunc_idx = np.where((wn >= 400) & (wn <= 500))[0]
+
+print(f"\nFull range: {len(full_idx)} wavelengths ({wn[0]:.0f}–{wn[-1]:.0f} nm)")
+print(f"Truncated range: {len(trunc_idx)} wavelengths (400–500 nm)")
+
+# Extract spectral data for each region
+spectra_full = processed_spectra[:, full_idx]        # shape (n_samples, n_full)
+spectra_trunc = processed_spectra[:, trunc_idx]      # shape (n_samples, n_trunc)
+
+# ============================================
+# 10. RUN PCA FOR BOTH REGIONS AND PLOT SIDE BY SIDE
+# ============================================
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), dpi=600)
+
+# Full range analysis
+res_full = pca_analysis(spectra_full, groups, sample_names,
+                        "Full wavelength range", ax=ax1)
+
+# Truncated range analysis (400-500 nm)
+res_trunc = pca_analysis(spectra_trunc, groups, sample_names,
+                         "Truncated range (400-500 nm)", ax=ax2)
+
+plt.tight_layout()
+plt.savefig("PCA_Comparison_Full_vs_Truncated.png", dpi=600, bbox_inches='tight')
+plt.show()
+
+# ============================================
+# 11. PRINT COMPARISON METRICS
+# ============================================
+print("\n" + "="*60)
+print("COMPARISON OF SEPARATION")
+print("="*60)
+
+print(f"\n{'Metric':<35} {'Full range':<20} {'Truncated (400-500 nm)':<25}")
+print("-"*80)
+print(f"{'Separation index (avg_between/avg_within)':<35} {res_full['separation_index']:<20.3f} {res_trunc['separation_index']:<25.3f}")
+print(f"{'Avg between‑group distance':<35} {res_full['avg_between']:<20.3f} {res_trunc['avg_between']:<25.3f}")
+print(f"{'Avg within‑group distance':<35} {res_full['avg_within']:<20.3f} {res_trunc['avg_within']:<25.3f}")
+
+print("\nBetween‑group distances:")
+for key in res_full['between_distances'].keys():
+    d_full = res_full['between_distances'][key]
+    d_trunc = res_trunc['between_distances'].get(key, np.nan)
+    print(f"  {key:<20} Full: {d_full:.3f}    Trunc: {d_trunc:.3f}")
